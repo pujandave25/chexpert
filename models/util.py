@@ -67,7 +67,7 @@ def get_predictions(preds, vocab, thresh=0.15):
     return pred_labels
 
 
-def chexpert_data_loader(reparse=False, img_size=224, bs=32):
+def chexpert_data_loader(reparse=False, img_size=224, bs=64):
     """ Load the CheXpert dataset.
         Try loading from the saved chexpert-small.pkl
         if it exists and reparse is not requested.
@@ -97,13 +97,16 @@ def chexpert_data_loader(reparse=False, img_size=224, bs=32):
         valid_df = pd.read_csv(chexpert/'valid.csv')
         train_df.insert(loc=1, column='Valid', value=False)
         valid_df.insert(loc=1, column='Valid', value=True)
-        cat_df = pd.concat([train_df, valid_df]).fillna(0).replace(-1, 0)
+        
+        # We replace all unavailable or -1 labels with a number closer to 1
+        # this is the Label Smoothing Regularization (LSR) approach.
+        cat_df = (pd.concat([train_df, valid_df])
+                  .fillna(-1).applymap(lambda l: l if l != -1 else random.uniform(0.8, 1)))
 
         labels = list(cat_df.iloc[:,6:].columns.values)
 
         # we resize so that the larger dimension is match and crop 
         # (randomly on the training set, center crop for the validation set)
-        # Using batchsize of 128 for trainng and validation
         dls = ImageDataLoaders.from_df(
         df=cat_df, path=chexpert, folder='/storage/archive/',
         label_col=labels, y_block=MultiCategoryBlock(encoded=True, vocab=labels),
