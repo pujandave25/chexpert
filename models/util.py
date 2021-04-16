@@ -25,8 +25,6 @@ class ChexpertLearner(Learner):
                 return
             except FileNotFoundError as e:
                 print(f'Could not find saved model {saved_model_name}.')
-
-        print('Learning new model by training...')
         
         torch.cuda.empty_cache()
 
@@ -38,11 +36,15 @@ class ChexpertLearner(Learner):
         #     Smith LN. Cyclical learning rates for training neural networks.
         #     In 2017 IEEE winter conference on applications of computer vision
         #     (WACV) 2017 Mar 24 (pp. 464-472). IEEE.
-
-        self.learn.fine_tune(**kwargs)
         
-        self.learn.save(saved_model_name)
-        print(f'{saved_model_name}: model saved')
+        # Using callbacks for a few things:
+        callbacks = [
+            ShowGraphCallback(), # Show the graph
+            SaveModelCallback(fname=saved_model_name), # Save the model if it improves
+            ReduceLROnPlateau() # If the error rate plateaus then reduce it by a factor of 10
+        ]
+        
+        self.learn.fine_tune(cbs=callbacks, **kwargs)
 
 
 def get_predictions(preds, vocab, thresh=0.15):
@@ -65,7 +67,7 @@ def get_predictions(preds, vocab, thresh=0.15):
     return pred_labels
 
 
-def chexpert_data_loader(reparse=False, img_size=224, bs=64):
+def chexpert_data_loader(reparse=False, img_size=224, bs=32):
     """ Load the CheXpert dataset.
         Try loading from the saved chexpert-small.pkl
         if it exists and reparse is not requested.
