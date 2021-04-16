@@ -40,10 +40,10 @@ def _show_activations_heatmap(model, learn, idx, ax1, ax2):
         
     pred_labels = util.get_predictions(preds, learn.dls.vocab, thresh=0.15)
     
-    image.show(ax1, extent=(0,144,144,0))
-    image.show(ax2, extent=(0,144,144,0))
+    image.show(ax1, extent=(0,56,56,0))
+    image.show(ax2, extent=(0,56,56,0))
     
-    ax2.imshow(mult, alpha=0.6, extent=(0,144,144,0),
+    ax2.imshow(mult, alpha=0.6, extent=(0,56,56,0),
               interpolation='bilinear', cmap='magma')
     
     title = f'True: {true_labels}\n    Pred: {pred_labels}\n'

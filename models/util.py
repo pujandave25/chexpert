@@ -2,6 +2,18 @@ from fastai.vision.all import *
 import pandas as pd
 
 
+def _accum_values(self, preds, targs,learn=None):
+    "Store targs and preds"
+    to_d = learn.to_detach if learn is not None else to_detach
+    preds,targs = to_d(preds),to_d(targs)
+    if self.flatten: preds,targs = flatten_check(preds,targs)
+    targs = torch.round(targs)
+    self.preds.append(preds)
+    self.targs.append(targs)
+
+AccumMetric.accum_values = _accum_values
+
+        
 class ChexpertLearner(Learner):
     """ Learner wrapper specifically
         created for CheXpert
@@ -41,7 +53,8 @@ class ChexpertLearner(Learner):
         callbacks = [
             ShowGraphCallback(), # Show the graph
             SaveModelCallback(fname=saved_model_name), # Save the model if it improves
-            ReduceLROnPlateau() # If the error rate plateaus then reduce it by a factor of 10
+            ReduceLROnPlateau(), # If the error rate plateaus then reduce it by a factor of 10
+            CSVLogger(f'{saved_model_name}.csv') # CSV file for training results
         ]
         
         self.learn.fine_tune(cbs=callbacks, **kwargs)
@@ -67,7 +80,7 @@ def get_predictions(preds, vocab, thresh=0.15):
     return pred_labels
 
 
-def chexpert_data_loader(reparse=False, img_size=224, bs=64):
+def chexpert_data_loader(reparse=False, img_size=256, bs=64):
     """ Load the CheXpert dataset.
         Try loading from the saved chexpert-small.pkl
         if it exists and reparse is not requested.
@@ -100,8 +113,13 @@ def chexpert_data_loader(reparse=False, img_size=224, bs=64):
         
         # We replace all unavailable or -1 labels with a number closer to 1
         # this is the Label Smoothing Regularization (LSR) approach.
-        cat_df = (pd.concat([train_df, valid_df])
-                  .fillna(-1).applymap(lambda l: l if l != -1 else random.uniform(0.8, 1)))
+        # LSR is only applied to training set, for validation set we use 1.
+
+        # train_df = train_df.fillna(-1).applymap(lambda l: l if l != -1 else random.uniform(0.8, 1))
+        # valid_df = train_df.fillna(-1).replace(-1, 1)
+        
+        cat_df = (pd.concat([train_df, valid_df]).fillna(-1)
+                  .applymap(lambda l: l if l != -1 else random.uniform(0.8, 1)))
 
         labels = list(cat_df.iloc[:,6:].columns.values)
 
