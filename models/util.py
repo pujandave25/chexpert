@@ -64,7 +64,7 @@ def get_predictions(preds, vocab, thresh=0.15):
     """Returns predictions >= thresh"""
     pred_labels = []
     pred_tuples = []
-    prob_preds = torch.sigmoid(preds[0])
+    prob_preds = preds[0]
     mask = prob_preds >= thresh
     significant_labels = vocab[mask]
     significant_preds = prob_preds[mask]
@@ -133,3 +133,47 @@ def chexpert_data_loader(reparse=False, img_size=256, bs=64):
         torch.save(dls, saved_pkl)
     
     return dls, labels
+
+
+# Loss function with Hierarchical Label Conditional Probability
+# https://openreview.net/references/pdf?id=B17MrGFFN
+
+# The below single ancestor hierarchy works as the labels are listed in order
+# of their level, so we would have already checked the ancestors of ancestor.
+hierarchy_map = [-1, # 'No Finding',
+                 -1, # 'Enlarged Cardiomediastinum',
+                 1,  # 'Cardiomegaly',
+                 -1, # 'Lung Opacity',
+                 3,  # 'Lung Lesion',
+                 3,  # 'Edema',
+                 3,  # 'Consolidation',
+                 6,  # 'Pneumonia',
+                 3,  # 'Atelectasis',
+                 -1, # 'Pneumothorax',
+                 -1, # 'Pleural Effusion',
+                 -1, # 'Pleural Other',
+                 -1, # 'Fracture',
+                 -1] # 'Support Devices'
+
+@delegates()
+class BCEFlatHLCP(BaseLoss):
+    "Uses Hierarchical Label Conditional Probability with BCELossFlat"
+    @use_kwargs_dict(keep=True, weight=None, reduction='mean', pos_weight=None)
+    def __init__(self, *args, axis=-1, floatify=True, hierarchy_map=None, **kwargs):
+        super().__init__(nn.BCELoss, *args, axis=axis, floatify=floatify, is_2d=False, **kwargs)
+        self.hierarchy_map = hierarchy_map
+
+    def __call__(self, inp, targ, **kwargs):
+        "Here we apply hierarchy to the inputs and targets"
+        modified_inp = inp
+        modified_targ = targ
+        if self.hierarchy_map:
+            for i in range(inp.shape[1]):
+                if hierarchy_map[i] > 0:
+                    ancestor = hierarchy_map[i]
+                    modified_inp[:, i] *= torch.round(modified_targ[:, ancestor])
+                    modified_targ[:, i] *= torch.round(modified_targ[:, ancestor])
+            
+        return super().__call__(modified_inp, modified_targ, **kwargs)
+
+ 
