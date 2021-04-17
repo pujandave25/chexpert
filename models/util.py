@@ -22,9 +22,11 @@ class ChexpertLearner(Learner):
     def __init__(self, dls, arch, **kwargs):
         # For guide on all the input parameters,
         # check doc for cnn_learner
-        self.learn = cnn_learner(dls, arch, **kwargs)
+        self.path = Path('../saves/')
+        self.learn = cnn_learner(dls, arch, path=self.path, **kwargs)
+        self.loss_func = kwargs.get('loss_func')
     
-    def learn_model(self, use_saved=False,                
+    def learn_model(self, use_saved=False, train_saved=False,
                     # other args for Learner.fine_tune
                     **kwargs):
         """ Load a previously saved model or train a new model """
@@ -34,7 +36,8 @@ class ChexpertLearner(Learner):
         if use_saved:
             try:
                 self.learn.load(saved_model_name)
-                return
+                if not train_saved: return
+                else: self.learn.loss_func = self.loss_func
             except FileNotFoundError as e:
                 print(f'Could not find saved model {saved_model_name}.')
         
@@ -52,7 +55,7 @@ class ChexpertLearner(Learner):
         # Using callbacks for a few things:
         callbacks = [
             ShowGraphCallback(), # Show the graph
-            SaveModelCallback(fname=saved_model_name), # Save the model if it improves
+            SaveModelCallback(fname=saved_model_name, with_opt=True), # Save the model if it improves
             ReduceLROnPlateau(), # If the error rate plateaus then reduce it by a factor of 10
             CSVLogger(f'{saved_model_name}.csv') # CSV file for training results
         ]
@@ -60,27 +63,7 @@ class ChexpertLearner(Learner):
         self.learn.fine_tune(cbs=callbacks, **kwargs)
 
 
-def get_predictions(preds, vocab, thresh=0.15):
-    """Returns predictions >= thresh"""
-    pred_labels = []
-    pred_tuples = []
-    prob_preds = preds[0]
-    mask = prob_preds >= thresh
-    significant_labels = vocab[mask]
-    significant_preds = prob_preds[mask]
-    
-    for i in range(len(significant_labels)):
-        pred_tuples.append((significant_labels[i], significant_preds[i].item()))
-    
-    pred_tuples.sort(key = lambda x: x[1])
-    
-    for tup in reversed(pred_tuples):
-        pred_labels.append(f'{tup[0]}: {tup[1]:.3f}')
-    
-    return pred_labels
-
-
-def chexpert_data_loader(reparse=False, img_size=256, bs=64):
+def chexpert_data_loader(reparse=False, img_size=144, bs=128):
     """ Load the CheXpert dataset.
         Try loading from the saved chexpert-small.pkl
         if it exists and reparse is not requested.
@@ -136,7 +119,18 @@ def chexpert_data_loader(reparse=False, img_size=256, bs=64):
 
 
 # Loss function with Hierarchical Label Conditional Probability
-# https://openreview.net/references/pdf?id=B17MrGFFN
+#
+# Source1: http://proceedings.mlr.press/v102/chen19a/chen19a.pdf
+#
+# Source2:
+#  J. Irvin, P. Rajpurkar, M. Ko, Y. Yu, S. Ciurea-Ilcus, C. Chute,
+#  H. Marklund, B. Haghgoo, R. L. Ball, K. Shpanskaya, J. Seekins,
+#  D. A. Mong, S. S. Halabi, J. K. Sandberg, R. Jones, D. B. Larson,
+#  C. P. Langlotz, B. N. Patel, M. P. Lungren, A. Y. Ng,
+#  CheXpert: A large chest radiograph dataset with uncertainty
+#  labels and expert comparison, in: AAAI, 2019.
+#
+# Source3: https://arxiv.org/pdf/1911.06475.pdf
 
 # The below single ancestor hierarchy works as the labels are listed in order
 # of their level, so we would have already checked the ancestors of ancestor.
