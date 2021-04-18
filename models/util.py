@@ -50,7 +50,7 @@ class ChexpertLearner(Learner):
         print(f'lr_min/10: {lr_min}, lr_steep: {lr_steep}, base_lr: {self.base_lr}')
 
 
-    def learn_model(self, use_saved=False, train_saved=False,
+    def learn_model(self, use_saved=False, train_saved=False, old_learner=None,
                     # other args for Learner.fine_tune
                     **kwargs):
         """ Load a previously saved model or train a new model """
@@ -59,9 +59,14 @@ class ChexpertLearner(Learner):
 
         if use_saved:
             try:
-                self.learn.load(saved_model_name)
-                if not train_saved: return
-                else: self.learn.loss_func = self.loss_func
+                if not train_saved:
+                    self.learn.load(saved_model_name)
+                    return
+                if old_learner:
+                    old_learner.load(saved_model_name)
+                    self.learn.model[0].load_state_dict(old_learner.model[0].state_dict())
+                    self.learn.loss_func = self.loss_func
+                    
             except FileNotFoundError as e:
                 print(f'Could not find saved model {saved_model_name}.')
         
@@ -79,16 +84,16 @@ class ChexpertLearner(Learner):
         # Using callbacks for a few things:
         callbacks = [
             ShowGraphCallback(), # Show the graph
-            SaveModelCallback(fname=saved_model_name, with_opt=True, monitor='accuracy_multi'), # Save the model if it improves
-            ReduceLROnPlateau(monitor='accuracy_multi'), # If the error rate plateaus then reduce it by a factor of 10
+            SaveModelCallback(fname=saved_model_name, with_opt=True), # Save the model if it improves
+            ReduceLROnPlateau(patience=2), # If the validation loss stops improving then reduce it by a factor of 10
             CSVLogger(f'{saved_model_name}.csv'), # CSV file for training results
-            EarlyStoppingCallback(monitor='accuracy_multi', patience=5),
+            EarlyStoppingCallback(patience=5),
         ]
         
         self.learn.fine_tune(cbs=callbacks, base_lr=self.base_lr, **kwargs)
 
 
-def chexpert_data_loader(reparse=True, bs=32):
+def chexpert_data_loader(reparse=True, bs=32, use_hierarchy=False):
     """ Load the CheXpert dataset.
         Try loading from the saved chexpert-small.pkl
         if it exists and reparse is not requested.
@@ -101,14 +106,18 @@ def chexpert_data_loader(reparse=True, bs=32):
         
         NOTE: This assumes that the raw dataset is located at
                 /storage/archive/CheXpert-v1.0-small or as a
-                zip file /storage/archive/CheXpert-v1.0-small.zip
+                zip file /storage/archive/CheXpert-v1.0-small.zip        
     """
     
     chexpert = Path('/storage/archive/CheXpert-v1.0-small')
     saved_pkl = Path('../dataset/chexpert-small.pkl')
+    hc_saved_pkl = Path('../dataset/chexpert-small-hc.pkl')
     
-    if saved_pkl.exists() and not reparse:
-        dls = torch.load(saved_pkl)
+    if ((not use_hierarchy and saved_pkl.exists()) or (use_hierarchy and hc_saved_pkl.exists())) and not reparse:
+        if use_hierarchy:
+            dls = torch.load(hc_saved_pkl)
+        else:
+            dls = torch.load(saved_pkl)
         labels = list(dls.items.iloc[:,6:].columns.values)
     else:
         if not chexpert.exists():
@@ -123,20 +132,42 @@ def chexpert_data_loader(reparse=True, bs=32):
         # this is the Label Smoothing Regularization (LSR) approach.
         # LSR is only applied to training set, for validation set we use 1.
 
-        # train_df = train_df.fillna(-1).applymap(lambda l: l if l != -1 else random.uniform(0.8, 1))
-        # valid_df = train_df.fillna(-1).replace(-1, 1)
-        
+        # Only apply label smoothing when working with full dataset
         cat_df = (pd.concat([train_df, valid_df]).fillna(-1)
-                  .applymap(lambda l: l if l != -1 else random.uniform(0.8, 1)))
-
-        labels = list(cat_df.iloc[:,6:].columns.values)
+                  .applymap(lambda l: l if l != -1 else (
+                      0 if use_hierarchy else random.uniform(0, 0.001))))
         
+        labels = list(cat_df.iloc[:, 6:].columns.values)
+        
+        if use_hierarchy:
+            # As the model is to be focused on Atelectasis, Cardiomegaly,
+            # Consolidation, Edema, and Pleural Effusion, for hierarchy,
+            # let us just focus on a single hierarchy involving
+            # 'Lung Lesion',
+            # 'Edema',
+            # 'Pneumonia',
+            # 'Atelectasis',
+            # With 'Lung Opacity' and 'Consolidation' as parents.
+            # We only pick samples with the parents as positive.
+            # This approximates the conditional probability behavior
+            
+            col_indices_to_keep = list(range(6)) + list(range(10,15))
+            col_indices_to_keep.remove(12) # Remove 'Consolidation'
+            cat_df = (cat_df[(cat_df['Lung Opacity'] > 0) & (cat_df['Consolidation'] > 0)]
+                      .iloc[:, col_indices_to_keep])
+
+            # Remove lines where no class is True to avoid ROC metric exception
+            cat_df = cat_df[cat_df.iloc[:, 6:].sum(1) > 0]
+            labels = list(cat_df.iloc[:, 6:].columns.values)
+            
+
         # Random vertical flipping (L-R), Resize to 256x256, Crop and Resize to 224x224
         # The random aspects of the transforms only apply to training ds
         item_tfms = Resize(256)
         batch_tfms = [
             Flip(),
-            RandomResizedCrop(224),
+            # During test runs, it was noticed that random cropping is not helping much
+            # RandomResizedCrop(224),
         ]
 
         # Data is auto normalized to ImageNet ds
@@ -145,7 +176,10 @@ def chexpert_data_loader(reparse=True, bs=32):
         label_col=labels, y_block=MultiCategoryBlock(encoded=True, vocab=labels),
         item_tfms=item_tfms, batch_tfms=batch_tfms, bs=bs, val_bs=bs)
 
-        torch.save(dls, saved_pkl)
+        if use_hierarchy:
+            torch.save(dls, hc_saved_pkl)
+        else:
+            torch.save(dls, saved_pkl)
     
     return dls, labels
 
@@ -181,16 +215,17 @@ def chexpert_data_loader(reparse=True, bs=32):
 #                  -1, # 'Fracture',
 #                  -1] # 'Support Devices'
 
-hierarchy_map = ([2,4,5,6,7,8], [1,3,3,3,6,3])
+# Class index and ancestor index
+HIERARCHY_MAP = ([2,4,5,6,7,8], [1,3,3,3,6,3])
 
 @delegates()
 class BCEFlatHLCP(BaseLoss):
     "Uses Hierarchical Label Conditional Probability with BCELossFlat"
     @use_kwargs_dict(keep=True, weight=None, reduction='mean', pos_weight=None)
-    def __init__(self, *args, axis=-1, floatify=True, hierarchy_map=None, **kwargs):
+    def __init__(self, *args, axis=-1, floatify=True, **kwargs):
         super().__init__(nn.BCELoss, *args, axis=axis, floatify=floatify, is_2d=False, **kwargs)
-        self.orig_indices = hierarchy_map[0]
-        self.mask_indices = hierarchy_map[1]
+        self.orig_indices = HIERARCHY_MAP[0]
+        self.mask_indices = HIERARCHY_MAP[1]
 
     def __call__(self, inp, targ, **kwargs):
         "Here we apply hierarchy to the inputs and targets"
