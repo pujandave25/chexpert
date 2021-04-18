@@ -42,10 +42,6 @@ def _get_last_layer_activations(model, loss_fn, x, classes):
 
 def _show_activations_heatmap(model, learn, idx, ax1, ax2):
     image, classes = learn.dls.valid_ds[idx]
-    
-    # Transform the image as per the dataloader
-    # split_idx=1 for validation and test set (center crop)
-    image = learn.dls.after_item[0](image, split_idx=1)
     true_labels = learn.dls.vocab[classes == 1]
     x, = first(learn.dls.test_dl([image]))
     classes = classes.view(1, classes.shape[-1]).cuda()

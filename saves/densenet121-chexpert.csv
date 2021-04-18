@@ -1,0 +1,1 @@
+epoch,train_loss,valid_loss,error_rate,accuracy_multi,roc_auc_score,time

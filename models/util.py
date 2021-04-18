@@ -26,7 +26,7 @@ class ChexpertLearner(Learner):
         self.learn = cnn_learner(dls, arch, path=self.path, **kwargs)
         self.loss_func = kwargs.get('loss_func')
     
-    def learn_model(self, use_saved=False, train_saved=False,
+    def learn_model(self, use_saved=False, train_saved=False, base_lr=0.002,
                     # other args for Learner.fine_tune
                     **kwargs):
         """ Load a previously saved model or train a new model """
@@ -55,15 +55,16 @@ class ChexpertLearner(Learner):
         # Using callbacks for a few things:
         callbacks = [
             ShowGraphCallback(), # Show the graph
-            SaveModelCallback(fname=saved_model_name, with_opt=True), # Save the model if it improves
-            ReduceLROnPlateau(), # If the error rate plateaus then reduce it by a factor of 10
-            CSVLogger(f'{saved_model_name}.csv') # CSV file for training results
+            SaveModelCallback(fname=saved_model_name, with_opt=True, monitor='accuracy_multi'), # Save the model if it improves
+            ReduceLROnPlateau(monitor='accuracy_multi'), # If the error rate plateaus then reduce it by a factor of 10
+            CSVLogger(f'{saved_model_name}.csv'), # CSV file for training results
+            EarlyStoppingCallback(monitor='accuracy_multi', patience=5),
         ]
         
-        self.learn.fine_tune(cbs=callbacks, **kwargs)
+        self.learn.fine_tune(cbs=callbacks, base_lr=base_lr, **kwargs)
 
 
-def chexpert_data_loader(reparse=False, img_size=144, bs=128):
+def chexpert_data_loader(reparse=True, bs=32):
     """ Load the CheXpert dataset.
         Try loading from the saved chexpert-small.pkl
         if it exists and reparse is not requested.
@@ -105,13 +106,20 @@ def chexpert_data_loader(reparse=False, img_size=144, bs=128):
                   .applymap(lambda l: l if l != -1 else random.uniform(0.8, 1)))
 
         labels = list(cat_df.iloc[:,6:].columns.values)
+        
+        # Random vertical flipping (L-R), Resize to 256x256, Crop and Resize to 224x224
+        # The random aspects of the transforms only apply to training ds
+        item_tfms = Resize(256)
+        batch_tfms = [
+            Flip(),
+            RandomResizedCrop(224),
+        ]
 
-        # we resize so that the larger dimension is match and crop 
-        # (randomly on the training set, center crop for the validation set)
+        # Data is auto normalized to ImageNet ds
         dls = ImageDataLoaders.from_df(
         df=cat_df, path=chexpert, folder='/storage/archive/',
         label_col=labels, y_block=MultiCategoryBlock(encoded=True, vocab=labels),
-        item_tfms=Resize(img_size), bs=bs, val_bs=bs)
+        item_tfms=item_tfms, batch_tfms=batch_tfms, bs=bs, val_bs=bs)
 
         torch.save(dls, saved_pkl)
     
