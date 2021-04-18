@@ -16,7 +16,7 @@ def _get_predictions(preds, vocab, thresh=0.15):
     """Returns predictions >= thresh"""
     pred_labels = []
     pred_tuples = []
-    prob_preds = preds[0]
+    prob_preds = torch.sigmoid(preds[0])
     mask = prob_preds >= thresh
     significant_labels = vocab[mask]
     significant_preds = prob_preds[mask]
