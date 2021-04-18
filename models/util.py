@@ -10,6 +10,7 @@ def _accum_values(self, preds, targs,learn=None):
     targs = torch.round(targs)
     self.preds.append(preds)
     self.targs.append(targs)
+    
 
 AccumMetric.accum_values = _accum_values
 
@@ -41,6 +42,8 @@ class ChexpertLearner(Learner):
         #     Smith LN. Cyclical learning rates for training neural networks.
         #     In 2017 IEEE winter conference on applications of computer vision
         #     (WACV) 2017 Mar 24 (pp. 464-472). IEEE.
+        
+        torch.cuda.empty_cache()
 
         lr_min, lr_steep = self.learn.lr_find()
         self.base_lr = max(lr_min, lr_steep)
@@ -163,20 +166,22 @@ def chexpert_data_loader(reparse=True, bs=32):
 
 # The below single ancestor hierarchy works as the labels are listed in order
 # of their level, so we would have already checked the ancestors of ancestor.
-hierarchy_map = [-1, # 'No Finding',
-                 -1, # 'Enlarged Cardiomediastinum',
-                 1,  # 'Cardiomegaly',
-                 -1, # 'Lung Opacity',
-                 3,  # 'Lung Lesion',
-                 3,  # 'Edema',
-                 3,  # 'Consolidation',
-                 6,  # 'Pneumonia',
-                 3,  # 'Atelectasis',
-                 -1, # 'Pneumothorax',
-                 -1, # 'Pleural Effusion',
-                 -1, # 'Pleural Other',
-                 -1, # 'Fracture',
-                 -1] # 'Support Devices'
+# hierarchy_map = [-1, # 'No Finding',
+#                  -1, # 'Enlarged Cardiomediastinum',
+#                  1,  # 'Cardiomegaly',
+#                  -1, # 'Lung Opacity',
+#                  3,  # 'Lung Lesion',
+#                  3,  # 'Edema',
+#                  3,  # 'Consolidation',
+#                  6,  # 'Pneumonia',
+#                  3,  # 'Atelectasis',
+#                  -1, # 'Pneumothorax',
+#                  -1, # 'Pleural Effusion',
+#                  -1, # 'Pleural Other',
+#                  -1, # 'Fracture',
+#                  -1] # 'Support Devices'
+
+hierarchy_map = ([2,4,5,6,7,8], [1,3,3,3,6,3])
 
 @delegates()
 class BCEFlatHLCP(BaseLoss):
@@ -184,15 +189,17 @@ class BCEFlatHLCP(BaseLoss):
     @use_kwargs_dict(keep=True, weight=None, reduction='mean', pos_weight=None)
     def __init__(self, *args, axis=-1, floatify=True, hierarchy_map=None, **kwargs):
         super().__init__(nn.BCELoss, *args, axis=axis, floatify=floatify, is_2d=False, **kwargs)
-        self.hierarchy_map = hierarchy_map
+        self.orig_indices = hierarchy_map[0]
+        self.mask_indices = hierarchy_map[1]
 
     def __call__(self, inp, targ, **kwargs):
-        "Here we apply hierarchy to the inputs and targets"        
-        if self.hierarchy_map:
-            for i in range(inp.shape[1]):
-                if hierarchy_map[i] > 0:
-                    ancestor = hierarchy_map[i]
-                    inp[:, i] *= torch.round(targ[:, ancestor])
-                    targ[:, i] *= torch.round(targ[:, ancestor])
-            
-        return super().__call__(inp, targ, **kwargs)
+        "Here we apply hierarchy to the inputs and targets"
+        modified_inp = inp.detach().sigmoid()
+        modified_targ = torch.round(targ)
+        
+        modified_inp[:, self.orig_indices] = torch.mul(modified_inp[:, self.orig_indices], modified_targ[:, self.mask_indices])
+        modified_targ[:, self.orig_indices]= torch.mul(modified_targ[:, self.orig_indices], modified_targ[:, self.mask_indices])
+        
+        modified_inp.requires_grad = True
+        
+        return super().__call__(modified_inp, modified_targ, **kwargs)
