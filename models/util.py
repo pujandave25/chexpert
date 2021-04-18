@@ -18,15 +18,36 @@ class ChexpertLearner(Learner):
     """ Learner wrapper specifically
         created for CheXpert
     """
-    
+
+
     def __init__(self, dls, arch, **kwargs):
         # For guide on all the input parameters,
         # check doc for cnn_learner
         self.path = Path('../saves/')
         self.learn = cnn_learner(dls, arch, path=self.path, **kwargs)
         self.loss_func = kwargs.get('loss_func')
-    
-    def learn_model(self, use_saved=False, train_saved=False, base_lr=0.002,
+        self.base_lr = 0.002
+
+
+    def find_lr(self):
+        # Quick way to find the optimal LRs
+        # take the max of the lr_min (min loss/10)
+        # and lr_steep (steepest loss/lr curve) as
+        # fine_tune will use a cycle rangining from
+        # base_lr/100 to base_lr
+
+        # Refer: https://iconof.com/1cycle-learning-rate-policy/
+        # Citation:
+        #     Smith LN. Cyclical learning rates for training neural networks.
+        #     In 2017 IEEE winter conference on applications of computer vision
+        #     (WACV) 2017 Mar 24 (pp. 464-472). IEEE.
+
+        lr_min, lr_steep = self.learn.lr_find()
+        self.base_lr = max(lr_min, lr_steep)
+        print(f'lr_min/10: {lr_min}, lr_steep: {lr_steep}, base_lr: {base_lr}')
+
+
+    def learn_model(self, use_saved=False, train_saved=False,
                     # other args for Learner.fine_tune
                     **kwargs):
         """ Load a previously saved model or train a new model """
@@ -61,7 +82,7 @@ class ChexpertLearner(Learner):
             EarlyStoppingCallback(monitor='accuracy_multi', patience=5),
         ]
         
-        self.learn.fine_tune(cbs=callbacks, base_lr=base_lr, **kwargs)
+        self.learn.fine_tune(cbs=callbacks, base_lr=self.base_lr, **kwargs)
 
 
 def chexpert_data_loader(reparse=True, bs=32):
@@ -167,8 +188,8 @@ class BCEFlatHLCP(BaseLoss):
 
     def __call__(self, inp, targ, **kwargs):
         "Here we apply hierarchy to the inputs and targets"
-        modified_inp = inp
-        modified_targ = targ
+        modified_inp = inp.clone()
+        modified_targ = targ.clone()
         if self.hierarchy_map:
             for i in range(inp.shape[1]):
                 if hierarchy_map[i] > 0:
@@ -177,5 +198,3 @@ class BCEFlatHLCP(BaseLoss):
                     modified_targ[:, i] *= torch.round(modified_targ[:, ancestor])
             
         return super().__call__(modified_inp, modified_targ, **kwargs)
-
- 
