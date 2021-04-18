@@ -44,7 +44,7 @@ class ChexpertLearner(Learner):
 
         lr_min, lr_steep = self.learn.lr_find()
         self.base_lr = max(lr_min, lr_steep)
-        print(f'lr_min/10: {lr_min}, lr_steep: {lr_steep}, base_lr: {base_lr}')
+        print(f'lr_min/10: {lr_min}, lr_steep: {lr_steep}, base_lr: {self.base_lr}')
 
 
     def learn_model(self, use_saved=False, train_saved=False,
@@ -187,14 +187,12 @@ class BCEFlatHLCP(BaseLoss):
         self.hierarchy_map = hierarchy_map
 
     def __call__(self, inp, targ, **kwargs):
-        "Here we apply hierarchy to the inputs and targets"
-        modified_inp = inp.clone()
-        modified_targ = targ.clone()
+        "Here we apply hierarchy to the inputs and targets"        
         if self.hierarchy_map:
             for i in range(inp.shape[1]):
                 if hierarchy_map[i] > 0:
                     ancestor = hierarchy_map[i]
-                    modified_inp[:, i] *= torch.round(modified_targ[:, ancestor])
-                    modified_targ[:, i] *= torch.round(modified_targ[:, ancestor])
+                    inp[:, i] *= torch.round(targ[:, ancestor])
+                    targ[:, i] *= torch.round(targ[:, ancestor])
             
-        return super().__call__(modified_inp, modified_targ, **kwargs)
+        return super().__call__(inp, targ, **kwargs)
