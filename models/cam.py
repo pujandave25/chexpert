@@ -16,7 +16,7 @@ def _get_predictions(preds, vocab, thresh=0.15):
     """Returns predictions >= thresh"""
     pred_labels = []
     pred_tuples = []
-    prob_preds = preds[0]
+    prob_preds = torch.sigmoid(preds[0])
     mask = prob_preds >= thresh
     significant_labels = vocab[mask]
     significant_preds = prob_preds[mask]
@@ -42,10 +42,6 @@ def _get_last_layer_activations(model, loss_fn, x, classes):
 
 def _show_activations_heatmap(model, learn, idx, ax1, ax2):
     image, classes = learn.dls.valid_ds[idx]
-    
-    # Transform the image as per the dataloader
-    # split_idx=1 for validation and test set (center crop)
-    image = learn.dls.after_item[0](image, split_idx=1)
     true_labels = learn.dls.vocab[classes == 1]
     x, = first(learn.dls.test_dl([image]))
     classes = classes.view(1, classes.shape[-1]).cuda()

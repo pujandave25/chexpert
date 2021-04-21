@@ -10,6 +10,7 @@ def _accum_values(self, preds, targs,learn=None):
     targs = torch.round(targs)
     self.preds.append(preds)
     self.targs.append(targs)
+    
 
 AccumMetric.accum_values = _accum_values
 
@@ -18,15 +19,38 @@ class ChexpertLearner(Learner):
     """ Learner wrapper specifically
         created for CheXpert
     """
-    
+
+
     def __init__(self, dls, arch, **kwargs):
         # For guide on all the input parameters,
         # check doc for cnn_learner
         self.path = Path('../saves/')
         self.learn = cnn_learner(dls, arch, path=self.path, **kwargs)
         self.loss_func = kwargs.get('loss_func')
-    
-    def learn_model(self, use_saved=False, train_saved=False,
+        self.base_lr = 0.002
+
+
+    def find_lr(self):
+        # Quick way to find the optimal LRs
+        # take the max of the lr_min (min loss/10)
+        # and lr_steep (steepest loss/lr curve) as
+        # fine_tune will use a cycle rangining from
+        # base_lr/100 to base_lr
+
+        # Refer: https://iconof.com/1cycle-learning-rate-policy/
+        # Citation:
+        #     Smith LN. Cyclical learning rates for training neural networks.
+        #     In 2017 IEEE winter conference on applications of computer vision
+        #     (WACV) 2017 Mar 24 (pp. 464-472). IEEE.
+        
+        torch.cuda.empty_cache()
+
+        lr_min, lr_steep = self.learn.lr_find()
+        self.base_lr = max(lr_min, lr_steep)
+        print(f'lr_min/10: {lr_min}, lr_steep: {lr_steep}, base_lr: {self.base_lr}')
+
+
+    def learn_model(self, use_saved=False, train_saved=False, old_learner=None,
                     # other args for Learner.fine_tune
                     **kwargs):
         """ Load a previously saved model or train a new model """
@@ -35,9 +59,14 @@ class ChexpertLearner(Learner):
 
         if use_saved:
             try:
-                self.learn.load(saved_model_name)
-                if not train_saved: return
-                else: self.learn.loss_func = self.loss_func
+                if not train_saved:
+                    self.learn.load(saved_model_name)
+                    return
+                if old_learner:
+                    old_learner.load(saved_model_name)
+                    self.learn.model[0].load_state_dict(old_learner.model[0].state_dict())
+                    self.learn.loss_func = self.loss_func
+                    
             except FileNotFoundError as e:
                 print(f'Could not find saved model {saved_model_name}.')
         
@@ -56,14 +85,15 @@ class ChexpertLearner(Learner):
         callbacks = [
             ShowGraphCallback(), # Show the graph
             SaveModelCallback(fname=saved_model_name, with_opt=True), # Save the model if it improves
-            ReduceLROnPlateau(), # If the error rate plateaus then reduce it by a factor of 10
-            CSVLogger(f'{saved_model_name}.csv') # CSV file for training results
+            ReduceLROnPlateau(patience=2), # If the validation loss stops improving then reduce it by a factor of 10
+            CSVLogger(f'{saved_model_name}.csv'), # CSV file for training results
+            EarlyStoppingCallback(patience=5),
         ]
         
-        self.learn.fine_tune(cbs=callbacks, **kwargs)
+        self.learn.fine_tune(cbs=callbacks, base_lr=self.base_lr, **kwargs)
 
 
-def chexpert_data_loader(reparse=False, img_size=144, bs=128):
+def chexpert_data_loader(reparse=True, bs=32, use_hierarchy=False):
     """ Load the CheXpert dataset.
         Try loading from the saved chexpert-small.pkl
         if it exists and reparse is not requested.
@@ -76,14 +106,18 @@ def chexpert_data_loader(reparse=False, img_size=144, bs=128):
         
         NOTE: This assumes that the raw dataset is located at
                 /storage/archive/CheXpert-v1.0-small or as a
-                zip file /storage/archive/CheXpert-v1.0-small.zip
+                zip file /storage/archive/CheXpert-v1.0-small.zip        
     """
     
     chexpert = Path('/storage/archive/CheXpert-v1.0-small')
     saved_pkl = Path('../dataset/chexpert-small.pkl')
+    hc_saved_pkl = Path('../dataset/chexpert-small-hc.pkl')
     
-    if saved_pkl.exists() and not reparse:
-        dls = torch.load(saved_pkl)
+    if ((not use_hierarchy and saved_pkl.exists()) or (use_hierarchy and hc_saved_pkl.exists())) and not reparse:
+        if use_hierarchy:
+            dls = torch.load(hc_saved_pkl)
+        else:
+            dls = torch.load(saved_pkl)
         labels = list(dls.items.iloc[:,6:].columns.values)
     else:
         if not chexpert.exists():
@@ -98,22 +132,54 @@ def chexpert_data_loader(reparse=False, img_size=144, bs=128):
         # this is the Label Smoothing Regularization (LSR) approach.
         # LSR is only applied to training set, for validation set we use 1.
 
-        # train_df = train_df.fillna(-1).applymap(lambda l: l if l != -1 else random.uniform(0.8, 1))
-        # valid_df = train_df.fillna(-1).replace(-1, 1)
-        
+        # Only apply label smoothing when working with full dataset
         cat_df = (pd.concat([train_df, valid_df]).fillna(-1)
-                  .applymap(lambda l: l if l != -1 else random.uniform(0.8, 1)))
+                  .applymap(lambda l: l if l != -1 else (
+                      0 if use_hierarchy else random.uniform(0, 0.001))))
+        
+        labels = list(cat_df.iloc[:, 6:].columns.values)
+        
+        if use_hierarchy:
+            # As the model is to be focused on Atelectasis, Cardiomegaly,
+            # Consolidation, Edema, and Pleural Effusion, for hierarchy,
+            # let us just focus on a single hierarchy involving
+            # 'Lung Lesion',
+            # 'Edema',
+            # 'Pneumonia',
+            # 'Atelectasis',
+            # With 'Lung Opacity' and 'Consolidation' as parents.
+            # We only pick samples with the parents as positive.
+            # This approximates the conditional probability behavior
+            
+            col_indices_to_keep = list(range(6)) + list(range(10,15))
+            col_indices_to_keep.remove(12) # Remove 'Consolidation'
+            cat_df = (cat_df[(cat_df['Lung Opacity'] > 0) & (cat_df['Consolidation'] > 0)]
+                      .iloc[:, col_indices_to_keep])
 
-        labels = list(cat_df.iloc[:,6:].columns.values)
+            # Remove lines where no class is True to avoid ROC metric exception
+            cat_df = cat_df[cat_df.iloc[:, 6:].sum(1) > 0]
+            labels = list(cat_df.iloc[:, 6:].columns.values)
+            
 
-        # we resize so that the larger dimension is match and crop 
-        # (randomly on the training set, center crop for the validation set)
+        # Random vertical flipping (L-R), Resize to 256x256, Crop and Resize to 224x224
+        # The random aspects of the transforms only apply to training ds
+        item_tfms = Resize(256)
+        batch_tfms = [
+            Flip(),
+            # During test runs, it was noticed that random cropping is not helping much
+            # RandomResizedCrop(224),
+        ]
+
+        # Data is auto normalized to ImageNet ds
         dls = ImageDataLoaders.from_df(
         df=cat_df, path=chexpert, folder='/storage/archive/',
         label_col=labels, y_block=MultiCategoryBlock(encoded=True, vocab=labels),
-        item_tfms=Resize(img_size), bs=bs, val_bs=bs)
+        item_tfms=item_tfms, batch_tfms=batch_tfms, bs=bs, val_bs=bs)
 
-        torch.save(dls, saved_pkl)
+        if use_hierarchy:
+            torch.save(dls, hc_saved_pkl)
+        else:
+            torch.save(dls, saved_pkl)
     
     return dls, labels
 
@@ -134,40 +200,41 @@ def chexpert_data_loader(reparse=False, img_size=144, bs=128):
 
 # The below single ancestor hierarchy works as the labels are listed in order
 # of their level, so we would have already checked the ancestors of ancestor.
-hierarchy_map = [-1, # 'No Finding',
-                 -1, # 'Enlarged Cardiomediastinum',
-                 1,  # 'Cardiomegaly',
-                 -1, # 'Lung Opacity',
-                 3,  # 'Lung Lesion',
-                 3,  # 'Edema',
-                 3,  # 'Consolidation',
-                 6,  # 'Pneumonia',
-                 3,  # 'Atelectasis',
-                 -1, # 'Pneumothorax',
-                 -1, # 'Pleural Effusion',
-                 -1, # 'Pleural Other',
-                 -1, # 'Fracture',
-                 -1] # 'Support Devices'
+# hierarchy_map = [-1, # 'No Finding',
+#                  -1, # 'Enlarged Cardiomediastinum',
+#                  1,  # 'Cardiomegaly',
+#                  -1, # 'Lung Opacity',
+#                  3,  # 'Lung Lesion',
+#                  3,  # 'Edema',
+#                  3,  # 'Consolidation',
+#                  6,  # 'Pneumonia',
+#                  3,  # 'Atelectasis',
+#                  -1, # 'Pneumothorax',
+#                  -1, # 'Pleural Effusion',
+#                  -1, # 'Pleural Other',
+#                  -1, # 'Fracture',
+#                  -1] # 'Support Devices'
+
+# Class index and ancestor index
+HIERARCHY_MAP = ([2,4,5,6,7,8], [1,3,3,3,6,3])
 
 @delegates()
 class BCEFlatHLCP(BaseLoss):
     "Uses Hierarchical Label Conditional Probability with BCELossFlat"
     @use_kwargs_dict(keep=True, weight=None, reduction='mean', pos_weight=None)
-    def __init__(self, *args, axis=-1, floatify=True, hierarchy_map=None, **kwargs):
+    def __init__(self, *args, axis=-1, floatify=True, **kwargs):
         super().__init__(nn.BCELoss, *args, axis=axis, floatify=floatify, is_2d=False, **kwargs)
-        self.hierarchy_map = hierarchy_map
+        self.orig_indices = HIERARCHY_MAP[0]
+        self.mask_indices = HIERARCHY_MAP[1]
 
     def __call__(self, inp, targ, **kwargs):
         "Here we apply hierarchy to the inputs and targets"
-        modified_inp = inp
-        modified_targ = targ
-        if self.hierarchy_map:
-            for i in range(inp.shape[1]):
-                if hierarchy_map[i] > 0:
-                    ancestor = hierarchy_map[i]
-                    modified_inp[:, i] *= torch.round(modified_targ[:, ancestor])
-                    modified_targ[:, i] *= torch.round(modified_targ[:, ancestor])
-            
+        modified_inp = inp.detach().sigmoid()
+        modified_targ = torch.round(targ)
+        
+        modified_inp[:, self.orig_indices] = torch.mul(modified_inp[:, self.orig_indices], modified_targ[:, self.mask_indices])
+        modified_targ[:, self.orig_indices]= torch.mul(modified_targ[:, self.orig_indices], modified_targ[:, self.mask_indices])
+        
+        modified_inp.requires_grad = True
+        
         return super().__call__(modified_inp, modified_targ, **kwargs)
-
- 
