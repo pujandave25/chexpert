@@ -109,7 +109,7 @@ def chexpert_data_loader(reparse=True, bs=32, use_hierarchy=False):
                 zip file /storage/archive/CheXpert-v1.0-small.zip        
     """
     
-    chexpert = Path('/storage/archive/CheXpert-v1.0-small')
+    chexpert = Path('../../storage/archive/CheXpert-v1.0-small')
     saved_pkl = Path('../dataset/chexpert-small.pkl')
     hc_saved_pkl = Path('../dataset/chexpert-small-hc.pkl')
     
@@ -172,7 +172,7 @@ def chexpert_data_loader(reparse=True, bs=32, use_hierarchy=False):
 
         # Data is auto normalized to ImageNet ds
         dls = ImageDataLoaders.from_df(
-        df=cat_df, path=chexpert, folder='/storage/archive/',
+        df=cat_df, path=Path('../../storage/archive/'),
         label_col=labels, y_block=MultiCategoryBlock(encoded=True, vocab=labels),
         item_tfms=item_tfms, batch_tfms=batch_tfms, bs=bs, val_bs=bs)
 
