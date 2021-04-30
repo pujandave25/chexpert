@@ -1,5 +1,8 @@
 from fastai.vision.all import *
 import pandas as pd
+from libauc.losses import AUCMLoss
+from libauc.optimizers import PESG
+from sklearn.metrics import roc_auc_score
 
 
 def _accum_values(self, preds, targs,learn=None):
@@ -238,3 +241,84 @@ class BCEFlatHLCP(BaseLoss):
         modified_inp.requires_grad = True
         
         return super().__call__(modified_inp, modified_targ, **kwargs)
+
+class DAM:
+    def __init__(self, model_dam, dls, folder, lr=0.1, gamma=500, weight_decay=0, margin=1.0):
+        self.model = model_dam.cuda()
+        self.dls = dls
+        self.folder = folder
+        
+        self.loss_func = AUCMLoss()
+        self.opt_func = PESG(
+            self.model,
+            a=self.loss_func.a, 
+            b=self.loss_func.b, 
+            alpha=self.loss_func.alpha, 
+            lr=lr, 
+            gamma=gamma, 
+            margin=margin
+        )
+    
+    def eval(self):
+        self.model.eval()
+        test_pred = []
+        test_true = [] 
+        for j, (test_data, test_targets) in enumerate(self.dls.valid):
+            y_pred = self.model(test_data)
+            test_pred.append(y_pred.cpu().detach().numpy())
+            test_true.append(test_targets.cpu().detach().numpy())
+        test_true = np.concatenate(test_true)
+        test_true[test_true < 0.5] = 0
+        test_true[test_true >= 0.5] = 1
+        test_pred = np.concatenate(test_pred)
+        return roc_auc_score(test_true, test_pred, average='weighted')
+    
+    def train(self, max_epoch=3, lr_div=2, checkpoint=None):
+        # Load checkpoint if available
+        if checkpoint != None:
+            model_checkpoint = torch.load(self.folder/checkpoint)
+            self.model.load_state_dict(model_checkpoint['state_dict'])
+            self.opt_func.load_state_dict(model_checkpoint['optimizer'])
+
+        # Train model
+        max_auc = 0
+
+        for epoch in range(max_epoch):
+
+            train_pred = []
+            train_true = []
+            self.model.train()    
+            for i, (data, targets) in enumerate(self.dls.train):
+                self.opt_func.zero_grad()
+                y_pred = self.model(data)
+                loss = self.loss_func(y_pred, targets)
+                loss.backward(retain_graph=True)
+                self.opt_func.step()
+
+                train_pred.append(y_pred.cpu().detach().numpy())
+                train_true.append(targets.cpu().detach().numpy())
+
+            self.opt_func.lr = self.opt_func.lr/lr_div
+            self.opt_func.update_regularizer()
+
+            train_true = np.concatenate(train_true)
+            train_true[train_true < 0.5] = 0
+            train_true[train_true >= 0.5] = 1
+            train_pred = np.concatenate(train_pred)
+            
+            train_auc = roc_auc_score(train_true, train_pred, average='weighted') 
+
+            # Eval model
+            val_auc =  self.eval()
+
+            # print results
+            print("epoch: {}, train_loss: {:4f}, train_auc:{:4f}, test_auc:{:4f}, lr:{:4f}".format(epoch, loss.item(), train_auc, val_auc, self.opt_func.lr ))
+
+            # Save checkpoint
+            if val_auc > max_auc:
+                max_auc = val_auc
+                torch.save({
+                    'epoch': epoch+1,
+                    'best_auc': val_auc,
+                    'state_dict': self.model.state_dict()
+                }, self.folder/f"m-epoch {epoch+1}-{time.strftime('%Y_%h_%d-%H_%M_%S')}.pth.tar")
