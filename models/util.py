@@ -298,9 +298,6 @@ class DAM:
                 train_pred.append(y_pred.cpu().detach().numpy())
                 train_true.append(targets.cpu().detach().numpy())
 
-            self.opt_func.lr = self.opt_func.lr/lr_div
-            self.opt_func.update_regularizer()
-
             train_true = np.concatenate(train_true)
             train_true[train_true < 0.5] = 0
             train_true[train_true >= 0.5] = 1
@@ -322,3 +319,7 @@ class DAM:
                     'best_auc': val_auc,
                     'state_dict': self.model.state_dict()
                 }, self.folder/f"m-epoch {epoch+1}-{time.strftime('%Y_%h_%d-%H_%M_%S')}.pth.tar")
+            
+            # Reduce lr at each epoch
+            self.opt_func.lr = self.opt_func.lr/lr_div
+            self.opt_func.update_regularizer()
