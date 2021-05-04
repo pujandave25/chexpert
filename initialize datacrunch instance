@@ -1,0 +1,12 @@
+#!/bin/bash
+
+cd /
+sudo mkdir -p storage/archive
+cd storage/archive
+sudo curl -O http://download.cs.stanford.edu/deep/CheXpert-v1.0-small.zip
+sudo apt-get update
+sudo apt-get install unzip
+sudo unzip CheXpert-v1.0-small.zip
+pip install fastai fastcore --upgrade
+pip install libauc
+pip install jupyternotify
