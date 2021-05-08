@@ -247,6 +247,7 @@ class DAM:
         self.model = model_dam.cuda()
         self.dls = dls
         self.folder = folder
+        self.folder.mkdir(parents=True, exist_ok=True)
         
         self.loss_func = AUCMLoss()
         self.opt_func = PESG(
@@ -263,15 +264,17 @@ class DAM:
         self.model.eval()
         test_pred = []
         test_true = [] 
-        for j, (test_data, test_targets) in enumerate(self.dls.valid):
-            y_pred = self.model(test_data)
-            test_pred.append(y_pred.cpu().detach().numpy())
-            test_true.append(test_targets.cpu().detach().numpy())
-        test_true = np.concatenate(test_true)
-        test_true[test_true < 0.5] = 0
-        test_true[test_true >= 0.5] = 1
-        test_pred = np.concatenate(test_pred)
-        return roc_auc_score(test_true, test_pred, average='weighted')
+        with torch.no_grad():
+            for j, (test_data, test_targets) in enumerate(self.dls.valid):
+                y_pred = self.model(test_data)
+                test_pred.append(y_pred.cpu().detach().numpy())
+                test_true.append(test_targets.cpu().detach().numpy())
+            test_true = np.concatenate(test_true)
+            test_true[test_true < 0.5] = 0
+            test_true[test_true >= 0.5] = 1
+            test_pred = np.concatenate(test_pred)
+            auc = roc_auc_score(test_true, test_pred, average='weighted')
+        return auc
     
     def train(self, max_epoch=3, lr_div=2, checkpoint=None):
         # Load checkpoint if available
@@ -298,18 +301,19 @@ class DAM:
                 train_pred.append(y_pred.cpu().detach().numpy())
                 train_true.append(targets.cpu().detach().numpy())
 
-            train_true = np.concatenate(train_true)
-            train_true[train_true < 0.5] = 0
-            train_true[train_true >= 0.5] = 1
-            train_pred = np.concatenate(train_pred)
-            
-            train_auc = roc_auc_score(train_true, train_pred, average='weighted') 
+            with torch.no_grad():
+                train_true = np.concatenate(train_true)
+                train_true[train_true < 0.5] = 0
+                train_true[train_true >= 0.5] = 1
+                train_pred = np.concatenate(train_pred)
 
-            # Eval model
-            val_auc =  self.eval()
+                train_auc = roc_auc_score(train_true, train_pred, average='weighted') 
 
-            # print results
-            print("epoch: {}, train_loss: {:4f}, train_auc:{:4f}, test_auc:{:4f}, lr:{:4f}".format(epoch, loss.item(), train_auc, val_auc, self.opt_func.lr ))
+                # Eval model
+                val_auc =  self.eval()
+
+                # print results
+                print("epoch: {}, train_loss: {:4f}, train_auc:{:4f}, test_auc:{:4f}, lr:{:4f}".format(epoch, loss.item(), train_auc, val_auc, self.opt_func.lr ))
 
             # Save checkpoint
             if val_auc > max_auc:
