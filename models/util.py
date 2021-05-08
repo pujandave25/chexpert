@@ -259,8 +259,12 @@ class DAM:
             gamma=gamma, 
             margin=margin
         )
-    
-    def eval(self):
+        
+    def load(self, checkpoint):
+        model_checkpoint = torch.load(self.folder/checkpoint)
+        self.model.load_state_dict(model_checkpoint['state_dict'])
+
+    def eval(self, average='weighted', **kwargs):
         self.model.eval()
         test_pred = []
         test_true = [] 
@@ -273,16 +277,10 @@ class DAM:
             test_true[test_true < 0.5] = 0
             test_true[test_true >= 0.5] = 1
             test_pred = np.concatenate(test_pred)
-            auc = roc_auc_score(test_true, test_pred, average='weighted')
+            auc = roc_auc_score(test_true, test_pred, average=average, **kwargs)
         return auc
     
-    def train(self, max_epoch=3, lr_div=2, checkpoint=None):
-        # Load checkpoint if available
-        if checkpoint != None:
-            model_checkpoint = torch.load(self.folder/checkpoint)
-            self.model.load_state_dict(model_checkpoint['state_dict'])
-            self.opt_func.load_state_dict(model_checkpoint['optimizer'])
-
+    def train(self, max_epoch=3, lr_div=2):
         # Train model
         max_auc = 0
 
