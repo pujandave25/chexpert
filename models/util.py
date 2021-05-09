@@ -243,7 +243,7 @@ class BCEFlatHLCP(BaseLoss):
         return super().__call__(modified_inp, modified_targ, **kwargs)
 
 class DAM:
-    def __init__(self, model_dam, dls, folder, lr=0.1, gamma=500, weight_decay=0, margin=1.0):
+    def __init__(self, model_dam, dls, folder, imratio=0.2, lr=0.1, gamma=500, weight_decay=0, margin=1.0):
         self.model = model_dam.cuda()
         self.dls = dls
         self.folder = folder
@@ -255,6 +255,7 @@ class DAM:
             a=self.loss_func.a, 
             b=self.loss_func.b, 
             alpha=self.loss_func.alpha, 
+            imratio=imratio,
             lr=lr, 
             gamma=gamma, 
             margin=margin
