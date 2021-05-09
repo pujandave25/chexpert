@@ -1,0 +1,61 @@
+Category,Model,Score
+No Finding,Squeeze and Excite,0.84231348
+Enlarged Cardiomediastinum,Squeeze and Excite,0.55604938
+Cardiomegaly,Squeeze and Excite,0.78827883
+Lung Opacity,Squeeze and Excite,0.6946494
+Lung Lesion,Squeeze and Excite,0.68992735
+Edema,Squeeze and Excite,0.79542389
+Consolidation,Squeeze and Excite,0.67137736
+Pneumonia,Squeeze and Excite,0.66684144
+Atelectasis,Squeeze and Excite,0.64179737
+Pneumothorax,Squeeze and Excite,0.77624341
+Pleural Effusion,Squeeze and Excite,0.84102426
+Pleural Other,Squeeze and Excite,0.71363664
+Fracture,Squeeze and Excite,0.64763154
+Support Devices,Squeeze and Excite,0.80639343
+Overall,Squeeze and Excite,0.760662
+No Finding,Densenet + Conditional,0.87705957
+Enlarged Cardiomediastinum,Densenet + Conditional,0.65081756
+Cardiomegaly,Densenet + Conditional,0.84703554
+Lung Opacity,Densenet + Conditional,0.73695056
+Lung Lesion,Densenet + Conditional,0.75894761
+Edema,Densenet + Conditional,0.83899047
+Consolidation,Densenet + Conditional,0.70908271
+Pneumonia,Densenet + Conditional,0.72803254
+Atelectasis,Densenet + Conditional,0.69176406
+Pneumothorax,Densenet + Conditional,0.8676573
+Pleural Effusion,Densenet + Conditional,0.87801451
+Pleural Other,Densenet + Conditional,0.78684884
+Fracture,Densenet + Conditional,0.72243228
+Support Devices,Densenet + Conditional,0.88546321
+Overall,Densenet + Conditional,0.816
+No Finding,Densenet,0.47891005
+Enlarged Cardiomediastinum,Densenet,0.85533793
+Cardiomegaly,Densenet,0.78611659
+Lung Opacity,Densenet,0.76692247
+Lung Lesion,Densenet,0.75437226
+Edema,Densenet,0.7429889
+Consolidation,Densenet,0.859502
+Pneumonia,Densenet,0.759061
+Atelectasis,Densenet,0.65162
+Pneumothorax,Densenet,0.69018378
+Pleural Effusion,Densenet,0.8597649
+Pleural Other,Densenet,0.68140283
+Fracture,Densenet,0.83992987
+Support Devices,Densenet,0.6360166
+Overall,Densenet,0.737
+No Finding,Densenet + DAM,0.87006169
+Enlarged Cardiomediastinum,Densenet + DAM,0.6649
+Cardiomegaly,Densenet + DAM,0.849162
+Lung Opacity,Densenet + DAM,0.71735
+Lung Lesion,Densenet + DAM,0.7508
+Edema,Densenet + DAM,0.83673
+Consolidation,Densenet + DAM,0.71728
+Pneumonia,Densenet + DAM,0.7516
+Atelectasis,Densenet + DAM,0.67302
+Pneumothorax,Densenet + DAM,0.85925
+Pleural Effusion,Densenet + DAM,0.868907
+Pleural Other,Densenet + DAM,0.77324298
+Fracture,Densenet + DAM,0.7394
+Support Devices,Densenet + DAM,0.877705
+Overall,Densenet + DAM,0.8074
